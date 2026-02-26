@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Molecule Viewer (Chiral Mark Default OFF)</title>
+    <style>
+        :root {
+            --primary-color: #3b82f6;
+            --primary-hover: #2563eb;
+            --bg-color: #f3f4f6;
+            --panel-bg: rgba(255, 255, 255, 0.95);
+            --text-main: #111827;
+            --text-muted: #6b7280;
+            --border-color: #e5e7eb;
+            --radius: 8px;
+        }
+
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: var(--bg-color); 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
+            color: var(--text-main); 
+        }
+        
+        #container { 
+            width: 100vw; 
+            height: 100vh; 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            z-index: 1; 
+        }
+
+        /* 3D操作を受け取る透明なレイヤー */
+        #interaction-layer {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            z-index: 5; pointer-events: none; display: flex;
+        }
+        .interact-pane {
+            height: 100%; pointer-events: auto; touch-action: none;
+        }
+        #pane-left { width: 100%; }
+        #pane-right { width: 50%; display: none; }
+
+        #show-ui-btn {
+            position: absolute; top: 20px; left: 20px; z-index: 1000;
+            background: var(--panel-bg); backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.5); border-radius: 50%;
+            width: 48px; height: 48px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: var(--text-main); transition: background 0.2s;
+        }
+        #show-ui-btn.hidden { display: none !important; }
+        #show-ui-btn:hover { background: #ffffff; }
+        
+        #ui-container {
+            position: absolute; top: 20px; left: 20px; width: 340px; 
+            background: var(--panel-bg); backdrop-filter: blur(10px);
+            padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255,255,255,0.5); max-height: calc(100vh - 40px); 
+            overflow-y: auto; z-index: 100; transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+
+        #hide-ui-btn {
+            position: absolute; top: 15px; right: 15px; background: none; border: none;
+            color: #9ca3af; cursor: pointer; padding: 4px; display: flex;
+            align-items: center; justify-content: center; border-radius: 4px; transition: all 0.2s;
+        }
+        #hide-ui-btn:hover { color: #111827; background: #f3f4f6; }
+
+        #ui-container::-webkit-scrollbar { width: 6px; }
+        #ui-container::-webkit-scrollbar-track { background: transparent; }
+        #ui-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+        h1 { margin: 0 0 16px 0; font-size: 1.25rem; font-weight: 700; color: #1f2937; padding-right: 24px; }
+        h2 { margin: 0; font-size: 1.1rem; font-weight: 600; color: #374151; min-height: 26px; }
+
+        .search-container { display: flex; gap: 6px; margin-bottom: 16px; align-items: stretch; width: 100%; }
+        
+        input[type="text"] { 
+            flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--border-color); 
+            border-radius: var(--radius); font-size: 0.95rem; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        input[type="text"]:focus { border-color: var(--primary-color); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); }
+
+        .icon-btn {
+            display: flex; align-items: center; justify-content: center; padding: 0 14px; 
+            border: 1px solid var(--border-color); border-radius: var(--radius); 
+            cursor: pointer; transition: all 0.2s ease; flex-shrink: 0;
+        }
+        .icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .search-btn-color { background: var(--primary-color); color: white; border-color: var(--primary-color); }
+        .search-btn-color:hover { background: var(--primary-hover); }
+
+        .fav-btn-color { background: #fffbeb; color: #f59e0b; border-color: #fde68a; }
+        .fav-btn-color:hover { background: #fef3c7; border-color: #fcd34d; }
+
+        .title-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
+
+        #favorite-toggle-btn { background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #d1d5db; display: none; padding: 0; margin-left: 10px; }
+        #favorite-toggle-btn:hover { transform: scale(1.1); }
+        
+        #favorites-container { display: none; margin-bottom: 16px; background: #ffffff; border: 1px solid var(--border-color); border-radius: var(--radius); box-shadow: 0 2px 8px rgba(0,0,0,0.05); overflow: hidden; }
+        #favorites-container h3 { margin: 0; padding: 10px 12px; font-size: 0.85rem; color: var(--text-muted); background: #f9fafb; border-bottom: 1px solid var(--border-color); }
+        
+        #favorites-list { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; gap: 6px; padding: 8px 12px; margin: 0; list-style: none; }
+        #favorites-list::-webkit-scrollbar { width: 4px; }
+        #favorites-list::-webkit-scrollbar-track { background: transparent; }
+        #favorites-list::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+        
+        #favorites-list li { width: 100%; box-sizing: border-box; padding: 8px 12px; cursor: pointer; background: #f9fafb; border: 1px solid var(--border-color); border-radius: var(--radius); display: flex; flex-direction: row; justify-content: space-between; align-items: center; transition: background-color 0.2s, border-color 0.2s; }
+        #favorites-list li:hover { background: #f3f4f6; border-color: #d1d5db; }
+        
+        .fav-item-name { font-size: 0.9rem; font-weight: 600; color: #374151; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-grow: 1; text-align: left; }
+        .fav-delete-wrapper { margin-left: 8px; flex-shrink: 0; }
+        .fav-delete { color: #9ca3af; font-size: 1.2rem; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+        .fav-delete:hover { color: #ef4444; background: #fee2e2; }
+
+        .structure-img-container {
+            width: 100%; height: 240px; background: #ffffff; border: 1px solid var(--border-color);
+            border-radius: var(--radius); margin-bottom: 12px; overflow: hidden; display: none; 
+            position: relative; align-items: center; justify-content: center; cursor: grab;
+            touch-action: none; user-select: none; 
+        }
+        .structure-img-container:active { cursor: grabbing; }
+
+        .zoom-controls { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 4px; z-index: 10; }
+        .zoom-controls button {
+            background: rgba(255, 255, 255, 0.9); border: 1px solid var(--border-color); border-radius: 4px;
+            width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; font-size: 16px; font-weight: bold; color: #4b5563;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); transition: background 0.2s, color 0.2s;
+        }
+        .zoom-controls button:hover { background: #f3f4f6; color: #111827; }
+
+        .structure-img { width: 100%; height: 100%; object-fit: contain; transform-origin: center center; transition: transform 0.2s ease-out; mix-blend-mode: multiply; pointer-events: none; }
+        
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; margin-bottom: 12px; background: #6b7280; color: white; letter-spacing: 0.5px; }
+        .badge.is-2d { background: #f59e0b; color: #fff; }
+
+        .text-btn { padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius); background: #ffffff; cursor: pointer; font-size: 0.95rem; color: #374151; font-weight: 500; transition: all 0.2s ease; display: flex; justify-content: center; align-items: center; gap: 6px; }
+        .text-btn:hover:not(:disabled) { background: #f9fafb; border-color: #d1d5db; }
+        .text-btn:disabled { background: #f3f4f6; color: #9ca3af; cursor: not-allowed; border-color: #e5e7eb; }
+        
+        /* 不斉炭素ボタン用のハイライトスタイル */
+        .chiral-btn-active { background: #fffbeb; color: #d97706; border-color: #fde68a; }
+        .chiral-btn-active:hover:not(:disabled) { background: #fef3c7; border-color: #fcd34d; }
+
+        .compare-btn { background: #f0fdfa; color: #0f766e; border-color: #ccfbf1; }
+        .compare-btn:hover:not(:disabled) { background: #ccfbf1; border-color: #99f6e4; }
+        .compare-btn.active-compare { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+        .compare-btn.active-compare:hover { background: #fee2e2; }
+
+        .controls { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+
+        #status-msg { margin-top: 8px; font-size: 0.85rem; padding: 8px 12px; border-radius: var(--radius); display: none; word-break: break-all; transition: opacity 0.3s; }
+        .status-error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+        .status-warning { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+        .status-info { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 24px; background: rgba(17, 24, 39, 0.8); backdrop-filter: blur(4px); color: white; border-radius: 8px; font-size: 1rem; font-weight: 500; z-index: 2000; display: none; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        #compound-description { font-size: 0.85rem; line-height: 1.5; color: #4b5563; margin-bottom: 12px; display: none; }
+
+        /* 画面分割時のUI要素 */
+        #split-divider {
+            position: absolute; top: 0; left: 50%; width: 2px; height: 100vh;
+            background: rgba(156, 163, 175, 0.5); transform: translateX(-50%);
+            pointer-events: none; z-index: 49; display: none;
+        }
+        
+        #split-labels {
+            position: absolute; bottom: 40px; left: 0; width: 100vw;
+            display: flex; pointer-events: none; z-index: 50; display: none;
+        }
+        .split-label-container { width: 50%; display: flex; justify-content: center; }
+        .split-label {
+            background: rgba(255, 255, 255, 0.9); padding: 8px 24px; border-radius: 24px;
+            font-weight: 700; color: #1f2937; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            border: 1px solid rgba(255,255,255,0.8); backdrop-filter: blur(4px); letter-spacing: 1px;
+        }
+    </style>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+    <div id="interaction-layer">
+        <div id="pane-left" class="interact-pane"></div>
+        <div id="pane-right" class="interact-pane"></div>
+    </div>
+
+    <div id="split-divider"></div>
+    <div id="split-labels">
+        <div class="split-label-container"><div class="split-label">オリジナル</div></div>
+        <div class="split-label-container"><div class="split-label" style="color: #0f766e;">鏡像異性体</div></div>
+    </div>
+
+    <button id="show-ui-btn" class="hidden" title="メニューを表示">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+    </button>
+
+    <div id="loading"><span id="loading-text">検索中...</span></div>
+
+    <div id="ui-container">
+        <button id="hide-ui-btn" title="パネルを隠す">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        </button>
+
+        <h1>Molecule Viewer</h1>
+
+        <div class="search-container">
+            <input type="text" id="search-input" placeholder="化合物名 (例: サリドマイド, イブプロフェン)">
+            <button id="search-btn" class="icon-btn search-btn-color" title="検索">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            </button>
+            <button id="show-favorites-btn" class="icon-btn fav-btn-color" title="お気に入りリスト">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+            </button>
+        </div>
+
+        <div id="favorites-container">
+            <h3>お気に入り一覧</h3><ul id="favorites-list"></ul>
+        </div>
+
+        <div class="title-container">
+            <h2 id="compound-name"></h2> <button id="favorite-toggle-btn" title="お気に入りに追加/解除">☆</button>
+        </div>
+        
+        <div id="compound-description"></div>
+        <div id="data-badge" class="badge" style="display: none;"></div>
+
+        <div id="structure-img-container" class="structure-img-container" title="ドラッグして移動">
+            <div class="zoom-controls">
+                <button id="zoom-in-btn" title="拡大">+</button><button id="zoom-out-btn" title="縮小">−</button><button id="zoom-reset-btn" title="リセット">↺</button>
+            </div>
+            <img class="structure-img" id="structure-img" src="" alt="2D Structure">
+        </div>
+
+        <div id="status-msg"></div>
+
+        <div class="controls" id="controls-area" style="display: none;">
+            <button id="toggle-labels-btn" class="text-btn">元素記号の表示: OFF</button>
+            
+            <button id="toggle-chiral-btn" class="text-btn" disabled>不斉炭素: 判定中...</button>
+            
+            <button id="all-rotate-btn" class="text-btn" disabled>すべての単結合を自動回転</button>
+            <button id="reset-btn" class="text-btn">初期位置に戻す</button>
+            
+            <button id="compare-btn" class="text-btn compare-btn" title="画面を分割してオリジナルと鏡像を並べます">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
+                鏡像を並べて比較
+            </button>
+        </div>
+    </div>
+
+    <div id="container"></div>
+
+    <script>
+        const CPK = {
+            'C': { color: 0x444444, radius: 0.45 }, 'H': { color: 0xFFFFFF, radius: 0.25 },
+            'O': { color: 0xFF0D0D, radius: 0.45 }, 'N': { color: 0x2250FD, radius: 0.45 },
+            'S': { color: 0xFFFF30, radius: 0.50 }, 'P': { color: 0xFF8000, radius: 0.50 },
+            'F': { color: 0x90E050, radius: 0.35 }, 'Cl':{ color: 0x1FF01F, radius: 0.50 },
+            'Br':{ color: 0xA62929, radius: 0.55 }, 'I': { color: 0x940094, radius: 0.60 },
+            'Na':{ color: 0xAB5CF2, radius: 0.55 }, 'DEFAULT': { color: 0xFF1493, radius: 0.4 }
+        };
+
+        const chiralHighlightMat = new THREE.MeshPhongMaterial({ 
+            color: 0xf59e0b,
+            transparent: true, 
+            opacity: 0.5,
+            shininess: 100,
+            depthWrite: false
+        });
+
+        let scene, renderer;
+        let cameraMain, cameraMirror;
+        let controlsMain, controlsMirror;
+        
+        let atoms = []; let bonds = []; let labelSprites = [];
+        let moleculeGroup; 
+        let isAllRotating = false; let allRotatableBondsList = []; let initialDistances = []; 
+        let currentCompound = null; let favorites = JSON.parse(localStorage.getItem('moleculeFavorites') || '[]');
+        let ui = {};
+        let currentZoom = 1.0; let defaultZoom = 1.0; let posX = 0; let posY = 0; let isDragging = false;
+        let startX = 0; let startY = 0; let statusTimeout;
+
+        let isSplitView = false;
+        let mirrorGroup = null;
+        let mirrorLabelSprites = [];
+
+        // キラル中心用変数
+        let isChiralVisible = false;
+        let chiralHighlights = [];
+        let mirrorChiralHighlights = [];
+
+        window.onload = function () {
+            initUI();
+            init3D();
+            animate();
+        };
+
+        function initUI() {
+            ui = {
+                container: document.getElementById('ui-container'), showUiBtn: document.getElementById('show-ui-btn'), hideUiBtn: document.getElementById('hide-ui-btn'),
+                status: document.getElementById('status-msg'), badge: document.getElementById('data-badge'), toggleLabels: document.getElementById('toggle-labels-btn'),
+                allRotateBtn: document.getElementById('all-rotate-btn'), reset: document.getElementById('reset-btn'), compareBtn: document.getElementById('compare-btn'),
+                toggleChiralBtn: document.getElementById('toggle-chiral-btn'), 
+                searchInput: document.getElementById('search-input'), searchBtn: document.getElementById('search-btn'), loading: document.getElementById('loading'),
+                loadingText: document.getElementById('loading-text'), nameDisplay: document.getElementById('compound-name'), favoriteToggleBtn: document.getElementById('favorite-toggle-btn'),
+                showFavoritesBtn: document.getElementById('show-favorites-btn'), favoritesContainer: document.getElementById('favorites-container'), favoritesList: document.getElementById('favorites-list'),
+                descriptionArea: document.getElementById('compound-description'), imgContainer: document.getElementById('structure-img-container'), imgEl: document.getElementById('structure-img'),
+                controlsArea: document.getElementById('controls-area'), zoomInBtn: document.getElementById('zoom-in-btn'), zoomOutBtn: document.getElementById('zoom-out-btn'), zoomResetBtn: document.getElementById('zoom-reset-btn'),
+                splitDivider: document.getElementById('split-divider'), splitLabels: document.getElementById('split-labels'),
+                paneLeft: document.getElementById('pane-left'), paneRight: document.getElementById('pane-right')
+            };
+
+            ui.hideUiBtn.addEventListener('click', () => { ui.container.style.display = 'none'; ui.showUiBtn.classList.remove('hidden'); });
+            ui.showUiBtn.addEventListener('click', () => { ui.showUiBtn.classList.add('hidden'); ui.container.style.display = 'block'; });
+
+            ui.toggleLabels.addEventListener('click', toggleLabels);
+            ui.toggleChiralBtn.addEventListener('click', toggleChiralMarks);
+            ui.reset.addEventListener('click', resetStructure);
+            ui.allRotateBtn.addEventListener('click', toggleAllRotate);
+            ui.compareBtn.addEventListener('click', toggleCompareMode);
+            
+            ui.searchBtn.addEventListener('click', () => handleSearch());
+            ui.searchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleSearch(); });
+            
+            ui.zoomInBtn.addEventListener('click', () => { currentZoom += 0.2; updateTransform(); });
+            ui.zoomOutBtn.addEventListener('click', () => { currentZoom = Math.max(0.2, currentZoom - 0.2); updateTransform(); });
+            ui.zoomResetBtn.addEventListener('click', () => { currentZoom = defaultZoom; posX = 0; posY = 0; updateTransform(); });
+
+            const onPointerDown = (e) => { isDragging = true; const clientX = e.clientX !== undefined ? e.clientX : e.touches[0].clientX; const clientY = e.clientY !== undefined ? e.clientY : e.touches[0].clientY; startX = clientX - posX; startY = clientY - posY; ui.imgEl.style.transition = 'none'; ui.imgContainer.style.cursor = 'grabbing'; };
+            const onPointerMove = (e) => { if (!isDragging) return; e.preventDefault(); const clientX = e.clientX !== undefined ? e.clientX : e.touches[0].clientX; const clientY = e.clientY !== undefined ? e.clientY : e.touches[0].clientY; posX = clientX - startX; posY = clientY - startY; applyTransform(); };
+            const onPointerUp = () => { isDragging = false; ui.imgEl.style.transition = 'transform 0.2s ease-out'; ui.imgContainer.style.cursor = 'grab'; };
+
+            ui.imgContainer.addEventListener('mousedown', onPointerDown); ui.imgContainer.addEventListener('mousemove', onPointerMove); ui.imgContainer.addEventListener('mouseup', onPointerUp); ui.imgContainer.addEventListener('mouseleave', onPointerUp);
+            ui.imgContainer.addEventListener('touchstart', onPointerDown, { passive: false }); ui.imgContainer.addEventListener('touchmove', onPointerMove, { passive: false }); ui.imgContainer.addEventListener('touchend', onPointerUp); ui.imgContainer.addEventListener('touchcancel', onPointerUp);
+
+            ui.imgEl.onerror = function() { if (this.src !== this.dataset.fallbackSrc && this.dataset.fallbackSrc) { this.src = this.dataset.fallbackSrc; } else { ui.imgContainer.style.display = 'none'; } };
+            ui.imgEl.onload = function() { defaultZoom = this.src === this.dataset.cactusSrc ? 1.35 : 1.0; currentZoom = defaultZoom; posX = 0; posY = 0; updateTransform(); };
+
+            ui.favoriteToggleBtn.addEventListener('click', toggleFavorite);
+            ui.showFavoritesBtn.addEventListener('click', () => { const isHidden = ui.favoritesContainer.style.display === 'none'; ui.favoritesContainer.style.display = isHidden ? 'block' : 'none'; if (isHidden) renderFavorites(); });
+        }
+        
+        function updateTransform() { ui.imgEl.style.transition = 'transform 0.2s ease-out'; applyTransform(); }
+        function applyTransform() { ui.imgEl.style.transform = `translate(${posX}px, ${posY}px) scale(${currentZoom})`; }
+
+        function init3D() {
+            const container = document.getElementById('container');
+            scene = new THREE.Scene(); scene.background = new THREE.Color(0xf3f4f6); 
+            
+            cameraMain = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+            cameraMain.position.set(0, 5, 25);
+            cameraMirror = cameraMain.clone();
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            controlsMain = new THREE.OrbitControls(cameraMain, ui.paneLeft);
+            controlsMain.enableDamping = true; controlsMain.dampingFactor = 0.05;
+
+            controlsMirror = new THREE.OrbitControls(cameraMirror, ui.paneRight);
+            controlsMirror.enableDamping = true; controlsMirror.dampingFactor = 0.05;
+
+            const ambient = new THREE.AmbientLight(0xffffff, 0.7); scene.add(ambient);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(10, 20, 15); dirLight.castShadow = true; scene.add(dirLight);
+
+            moleculeGroup = new THREE.Group(); scene.add(moleculeGroup);
+
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function displayStatusMessage(message, type, duration = 3500) {
+            clearTimeout(statusTimeout);
+            ui.status.innerText = message; ui.status.className = `status-${type}`;
+            ui.status.style.display = 'block'; ui.status.style.opacity = 1;
+            
+            if(type === 'info') {
+                statusTimeout = setTimeout(() => {
+                    ui.status.style.opacity = 0;
+                    setTimeout(() => { ui.status.style.display = 'none'; }, 300);
+                }, duration);
+            }
+        }
+
+        function updateLoadingState(text) { ui.loadingText.innerText = text; }
+
+        async function fetchCompoundInfo(query) {
+            updateLoadingState("情報を検索中...");
+            const url = `https://ja.wikipedia.org/w/api.php?action=query&prop=langlinks|extracts&lllang=en&exintro=true&explaintext=true&redirects=1&titles=${encodeURIComponent(query)}&format=json&origin=*`;
+            let result = { searchName: query, displayName: query, description: "" };
+            try {
+                const res = await fetch(url); const data = await res.json();
+                const pageId = Object.keys(data.query.pages)[0];
+                if (pageId !== "-1") {
+                    const page = data.query.pages[pageId];
+                    result.searchName = (page.langlinks && page.langlinks.length > 0) ? page.langlinks[0]['*'] : page.title;
+                    result.displayName = page.title;
+                    if (page.extract) {
+                        let text = page.extract.replace(/\n/g, ' ').trim();
+                        let sentences = text.match(/[^。]+。/g) || [text]; let shortDesc = sentences[0]; 
+                        if (sentences.length > 1 && shortDesc.length < 50) shortDesc += sentences[1];
+                        result.description = shortDesc.length > 150 ? shortDesc.substring(0, 150) + '...' : shortDesc;
+                    }
+                } else {
+                    const enUrl = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=true&explaintext=true&redirects=1&titles=${encodeURIComponent(query)}&format=json&origin=*`;
+                    const enData = await (await fetch(enUrl)).json(); const enPageId = Object.keys(enData.query.pages)[0];
+                    if (enPageId !== "-1") { result.searchName = enData.query.pages[enPageId].title; result.displayName = query; }
+                }
+            } catch (e) { console.warn("Wikipedia API Error:", e); }
+            return result;
+        }
+
+        async function handleSearch(overrideQuery) {
+            let rawName = overrideQuery || ui.searchInput.value.trim();
+            if (!rawName) return;
+            rawName = rawName.replace(/[－—]/g, '-').replace(/[、，]/g, ','); ui.searchInput.value = rawName; 
+            
+            ui.loading.style.display = 'block'; ui.status.style.display = 'none';
+            ui.nameDisplay.innerText = rawName; ui.favoriteToggleBtn.style.display = 'none';
+            ui.descriptionArea.style.display = 'none'; ui.imgContainer.style.display = 'none';
+            ui.badge.className = "badge"; ui.badge.innerText = "通信中..."; ui.badge.style.display = 'inline-block';
+            ui.controlsArea.style.display = 'none';
+            
+            clearMolecule();
+
+            try {
+                const info = await fetchCompoundInfo(rawName);
+                let finalDisplayName = (info.displayName !== rawName && info.displayName !== info.searchName) ? info.displayName : rawName;
+                ui.nameDisplay.innerText = finalDisplayName; currentCompound = { name: finalDisplayName, query: rawName };
+                updateFavoriteButtonState(); ui.favoriteToggleBtn.style.display = 'block';
+                if (info.description) { ui.descriptionArea.innerText = info.description; ui.descriptionArea.style.display = 'block'; }
+
+                updateLoadingState("データベースに接続中...");
+                const cidUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(info.searchName)}/cids/JSON`;
+                const cidRes = await fetch(cidUrl); if (!cidRes.ok) throw new Error("化合物が見つかりませんでした。");
+                const cid = (await cidRes.json()).IdentifierList.CID[0];
+
+                const cactusUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(info.searchName)}/image?width=500&height=500`;
+                const pubchemUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/PNG?record_type=2d&image_size=large`;
+                ui.imgEl.dataset.cactusSrc = cactusUrl; ui.imgEl.dataset.fallbackSrc = pubchemUrl;
+                ui.imgEl.src = cactusUrl; ui.imgContainer.style.display = 'flex'; 
+
+                updateLoadingState("3Dデータをダウンロード中...");
+                const sdfRes = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF?record_type=3d`);
+
+                if (sdfRes.ok) {
+                    updateLoadingState("3Dモデルを構築中...");
+                    const chiralCount = parseSDF(await sdfRes.text());
+                    
+                    // 初期状態はOFFにするUI処理
+                    if (chiralCount > 0) {
+                        ui.toggleChiralBtn.disabled = false;
+                        ui.toggleChiralBtn.innerText = `不斉炭素をマーク: OFF (${chiralCount}箇所)`;
+                        ui.toggleChiralBtn.classList.remove('chiral-btn-active');
+                    } else {
+                        ui.toggleChiralBtn.disabled = true;
+                        ui.toggleChiralBtn.innerText = `不斉炭素: なし`;
+                        ui.toggleChiralBtn.classList.remove('chiral-btn-active');
+                    }
+
+                    adjustCamera();
+                    ui.badge.style.display = 'none'; ui.controlsArea.style.display = 'flex';
+                    prepareAllRotatableBonds(); 
+                } else {
+                    ui.badge.className = "badge is-2d"; ui.badge.innerText = "2D表示のみ（3Dデータなし）";
+                    displayStatusMessage("この化合物には立体(3D)データがありません。", "warning");
+                }
+            } catch (e) {
+                console.error(e); ui.badge.className = "badge"; ui.badge.innerText = "エラー";
+                displayStatusMessage(e.message || "通信エラーが発生しました。", "error");
+            } finally { ui.loading.style.display = 'none'; }
+        }
+
+        function toggleFavorite() {
+            if (!currentCompound) return;
+            const index = favorites.findIndex(f => f.name === currentCompound.name);
+            if (index > -1) favorites.splice(index, 1); else favorites.push(currentCompound);
+            favorites.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+            localStorage.setItem('moleculeFavorites', JSON.stringify(favorites));
+            updateFavoriteButtonState();
+            if (ui.favoritesContainer.style.display === 'block') renderFavorites(); 
+        }
+
+        function updateFavoriteButtonState() {
+            if (!currentCompound) return; const isFav = favorites.some(f => f.name === currentCompound.name);
+            ui.favoriteToggleBtn.innerText = isFav ? "★" : "☆"; ui.favoriteToggleBtn.style.color = isFav ? "#f59e0b" : "#d1d5db";
+        }
+
+        function renderFavorites() {
+            ui.favoritesList.innerHTML = '';
+            if (favorites.length === 0) { ui.favoritesList.innerHTML = '<li style="color:#9ca3af; background:transparent; border:none; justify-content:center; cursor:default;">登録されていません</li>'; return; }
+            favorites.forEach(fav => {
+                const li = document.createElement('li');
+                const nameSpan = document.createElement('span'); nameSpan.innerText = fav.name; nameSpan.className = 'fav-item-name';
+                const delContainer = document.createElement('div'); delContainer.className = 'fav-delete-wrapper';
+                const delBtn = document.createElement('span'); delBtn.innerHTML = '&times;'; delBtn.className = 'fav-delete';
+                delBtn.onclick = (e) => { e.stopPropagation(); favorites = favorites.filter(f => f.name !== fav.name); localStorage.setItem('moleculeFavorites', JSON.stringify(favorites)); renderFavorites(); updateFavoriteButtonState(); };
+                delContainer.appendChild(delBtn); li.appendChild(nameSpan); li.appendChild(delContainer);
+                li.onclick = () => { ui.searchInput.value = fav.query; ui.favoritesContainer.style.display = 'none'; handleSearch(fav.query); };
+                ui.favoritesList.appendChild(li);
+            });
+        }
+
+        function clearMolecule() {
+            for (let i = moleculeGroup.children.length - 1; i >= 0; i--) {
+                const obj = moleculeGroup.children[i];
+                if (obj.children) obj.children.forEach(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) Array.isArray(child.material) ? child.material.forEach(m => m.dispose()) : child.material.dispose();
+                });
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) Array.isArray(obj.material) ? obj.material.forEach(m => m.dispose()) : obj.material.dispose();
+                moleculeGroup.remove(obj);
+            }
+            atoms = []; bonds = []; labelSprites = []; initialDistances = [];
+            chiralHighlights = []; mirrorChiralHighlights = []; 
+            
+            // 状態のリセット
+            isChiralVisible = false; 
+            ui.toggleChiralBtn.classList.remove('chiral-btn-active');
+            
+            stopAllRotate();
+            
+            isSplitView = false;
+            if (mirrorGroup) {
+                mirrorGroup.children.forEach(child => {
+                    child.traverse(node => {
+                        if (node.isMesh && node.geometry) node.geometry.dispose();
+                        if (node.isMesh && node.material) node.material.dispose();
+                    });
+                });
+                scene.remove(mirrorGroup);
+                mirrorGroup = null;
+            }
+            mirrorLabelSprites = [];
+            
+            ui.paneLeft.style.width = '100%';
+            ui.paneRight.style.display = 'none';
+            ui.splitLabels.style.display = 'none';
+            ui.splitDivider.style.display = 'none';
+            ui.compareBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg> 鏡像を並べて比較`;
+            ui.compareBtn.classList.remove('active-compare');
+            updateCameraAspect(false);
+            
+            if(ui.toggleLabels && ui.toggleLabels.innerText.includes("ON")) toggleLabels(); 
+        }
+
+        function adjustCamera() {
+            if (atoms.length === 0) return;
+            const box = new THREE.Box3().setFromObject(moleculeGroup);
+            const size = box.getSize(new THREE.Vector3()).length(); const center = box.getCenter(new THREE.Vector3());
+            
+            controlsMain.target.copy(center);
+            cameraMain.position.set(center.x, center.y + size * 0.3, center.z + Math.max(size * 1.5, 10));
+            cameraMain.lookAt(center); 
+            controlsMain.update();
+        }
+
+        function parseSDF(sdf) {
+            const lines = sdf.split(/\r?\n/); let atomCount = 0, bondCount = 0, startLine = -1;
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes('V2000') || lines[i].includes('V3000')) {
+                    const counts = lines[i].trim().split(/\s+/);
+                    if (counts.length >= 2 && !isNaN(parseInt(counts[0]))) { atomCount = parseInt(counts[0]); bondCount = parseInt(counts[1]); } 
+                    else if (lines[i].length >= 6) { atomCount = parseInt(lines[i].substring(0, 3).trim()); bondCount = parseInt(lines[i].substring(3, 6).trim()); }
+                    startLine = i + 1; break;
+                }
+            }
+            if (startLine === -1 || isNaN(atomCount) || atomCount <= 0) throw new Error("不正なSDF形式");
+
+            let center = new THREE.Vector3();
+            for (let i = 0; i < atomCount; i++) {
+                const line = lines[startLine + i]; if (!line) continue;
+                let x, y, z, elem;
+                if (line.length >= 33) {
+                    x = parseFloat(line.substring(0, 10)); y = parseFloat(line.substring(10, 20));
+                    z = parseFloat(line.substring(20, 30)) || 0; elem = line.substring(31, 34).trim();
+                } else {
+                    const parts = line.trim().split(/\s+/); if(parts.length < 4) continue;
+                    x = parseFloat(parts[0]); y = parseFloat(parts[1]); z = parseFloat(parts[2]) || 0; elem = parts[3];
+                }
+                if (isNaN(x) || isNaN(y)) continue; 
+                elem = elem.charAt(0).toUpperCase() + elem.slice(1).toLowerCase();
+                if (!/^[A-Z][a-z]?$/.test(elem)) elem = 'C'; 
+                const pos = new THREE.Vector3(x, y, z); center.add(pos);
+                atoms.push({ id: i, elem: elem, pos: pos, originalPos: pos.clone(), mesh: null, isChiral: false });
+            }
+
+            center.divideScalar(atoms.length);
+            atoms.forEach(a => { a.pos.sub(center); a.originalPos.sub(center); });
+
+            const bondStart = startLine + atomCount;
+            for (let i = 0; i < bondCount; i++) {
+                const line = lines[bondStart + i]; if (!line) continue;
+                let a1, a2, type;
+                if (line.length >= 9) {
+                    a1 = parseInt(line.substring(0, 3).trim()) - 1; a2 = parseInt(line.substring(3, 6).trim()) - 1; type = parseInt(line.substring(6, 9).trim());
+                } else {
+                    const parts = line.trim().split(/\s+/); if(parts.length < 3) continue;
+                    a1 = parseInt(parts[0]) - 1; a2 = parseInt(parts[1]) - 1; type = parseInt(parts[2]);
+                }
+                if (!isNaN(a1) && !isNaN(a2) && a1 >= 0 && a2 >= 0 && a1 < atoms.length && a2 < atoms.length) {
+                    bonds.push({ id: i, a1, a2, type, mesh: null });
+                }
+            }
+            
+            // 3Dモデル構築前に不斉炭素を判定
+            const chiralCount = findChiralCenters().length;
+            
+            // 初期状態はOFFにする
+            isChiralVisible = false;
+            
+            build3DModel(); 
+            calcInitialDistances(); 
+            
+            return chiralCount;
+        }
+
+        // ==========================================
+        // キラル中心（不斉炭素）の判定と表示
+        // ==========================================
+        function findChiralCenters() {
+            let chiralAtoms = [];
+            atoms.forEach((atom, index) => {
+                if (atom.elem !== 'C') return;
+                
+                let neighbors = bonds.filter(b => b.a1 === index || b.a2 === index)
+                                     .map(b => ({ idx: b.a1 === index ? b.a2 : b.a1, type: b.type }));
+                                     
+                // 二重結合・三重結合がある場合は不斉炭素にならない
+                if (neighbors.some(n => n.type > 1)) return;
+                
+                // 結合数が3か4のみ対象（暗黙の水素を許容）
+                if (neighbors.length < 3 || neighbors.length > 4) return;
+                
+                // 置換基の構造を木構造の文字列として取得して比較
+                let sigs = neighbors.map(n => getSubtreeSignature(index, n.idx));
+                if (neighbors.length === 3) sigs.push("H"); // 結合が3つの場合は残り1つをHとみなす
+                
+                let uniqueSigs = new Set(sigs);
+                // 4つの置換基すべてが異なる構造ならキラル中心
+                if (uniqueSigs.size === 4) {
+                    atom.isChiral = true;
+                    chiralAtoms.push(index);
+                }
+            });
+            return chiralAtoms;
+        }
+
+        function getSubtreeSignature(centerIdx, startIdx, maxDepth = 8) {
+            let visited = new Set();
+            visited.add(centerIdx);
+            
+            function traverse(currentIdx, parentIdx, depth) {
+                if (depth > maxDepth) return "MAX";
+                if (visited.has(currentIdx)) return "R"; 
+                
+                visited.add(currentIdx);
+                
+                let elem = atoms[currentIdx].elem;
+                let neighbors = bonds.filter(b => b.a1 === currentIdx || b.a2 === currentIdx)
+                                     .map(b => ({ idx: b.a1 === currentIdx ? b.a2 : b.a1, type: b.type }))
+                                     .filter(n => n.idx !== parentIdx && n.idx !== centerIdx);
+                                     
+                if (neighbors.length === 0) {
+                    visited.delete(currentIdx);
+                    return elem;
+                }
+                
+                let childSigs = neighbors.map(n => `${n.type}` + traverse(n.idx, currentIdx, depth + 1));
+                childSigs.sort(); 
+                
+                visited.delete(currentIdx); 
+                return elem + "[" + childSigs.join("") + "]";
+            }
+            
+            return traverse(startIdx, centerIdx, 1);
+        }
+
+        function toggleChiralMarks() {
+            isChiralVisible = !isChiralVisible;
+            
+            chiralHighlights.forEach(m => m.visible = isChiralVisible);
+            mirrorChiralHighlights.forEach(m => m.visible = isChiralVisible);
+            
+            const count = chiralHighlights.length;
+            ui.toggleChiralBtn.innerText = `不斉炭素をマーク: ${isChiralVisible ? "ON" : "OFF"} (${count}箇所)`;
+            
+            if (isChiralVisible) {
+                ui.toggleChiralBtn.classList.add('chiral-btn-active');
+            } else {
+                ui.toggleChiralBtn.classList.remove('chiral-btn-active');
+            }
+        }
+        // ==========================================
+
+        function calcInitialDistances() {
+            initialDistances = new Array(atoms.length).fill(0).map(() => new Array(atoms.length).fill(0));
+            for (let i = 0; i < atoms.length; i++) {
+                for (let j = i + 1; j < atoms.length; j++) {
+                    const dist = atoms[i].originalPos.distanceTo(atoms[j].originalPos);
+                    initialDistances[i][j] = dist; initialDistances[j][i] = dist;
+                }
+            }
+        }
+
+        function build3DModel() {
+            const geoSphere = new THREE.SphereGeometry(1, 16, 16);
+            atoms.forEach(atom => {
+                const conf = CPK[atom.elem] || CPK['DEFAULT'];
+                const mesh = new THREE.Mesh(geoSphere, new THREE.MeshPhongMaterial({ color: conf.color, shininess: 60 }));
+                mesh.scale.setScalar(conf.radius); mesh.position.copy(atom.pos);
+                mesh.castShadow = true; mesh.receiveShadow = true;
+                moleculeGroup.add(mesh); atom.mesh = mesh;
+
+                // キラル中心のハイライト球（半透明）
+                if (atom.isChiral) {
+                    const hlMesh = new THREE.Mesh(geoSphere, chiralHighlightMat);
+                    hlMesh.scale.setScalar(conf.radius * 1.35); 
+                    hlMesh.position.copy(atom.pos);
+                    // 初期表示フラグに従って可視性を設定
+                    hlMesh.visible = isChiralVisible;
+                    moleculeGroup.add(hlMesh);
+                    chiralHighlights.push(hlMesh);
+                }
+
+                const sprite = createLabelSprite(atom.elem);
+                sprite.position.set(0, 0, 0); sprite.visible = false; 
+                mesh.add(sprite); labelSprites.push(sprite);
+            });
+
+            bonds.forEach(bond => {
+                const group = new THREE.Group(); const mat = new THREE.MeshPhongMaterial({ color: 0xaaaaaa, shininess: 30 });
+                if (bond.type === 2) {
+                    const geo = new THREE.CylinderGeometry(0.06, 0.06, 1, 8);
+                    const c1 = new THREE.Mesh(geo, mat); const c2 = new THREE.Mesh(geo, mat);
+                    c1.position.set(0.12, 0, 0); c2.position.set(-0.12, 0, 0); group.add(c1); group.add(c2);
+                } else if (bond.type === 3) {
+                    const geo = new THREE.CylinderGeometry(0.04, 0.04, 1, 8);
+                    const c1 = new THREE.Mesh(geo, mat); const c2 = new THREE.Mesh(geo, mat); const c3 = new THREE.Mesh(geo, mat);
+                    c1.position.set(0, 0, 0); c2.position.set(0.15, 0, 0); c3.position.set(-0.15, 0, 0); group.add(c1); group.add(c2); group.add(c3);
+                } else {
+                    group.add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1, 8), mat));
+                }
+                moleculeGroup.add(group); bond.mesh = group; updateBondTransform(bond);
+            });
+        }
+
+        function createLabelSprite(text) {
+            const canvas = document.createElement('canvas'); const size = 64; canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext('2d'); ctx.fillStyle = "rgba(0,0,0,0)"; ctx.fillRect(0, 0, size, size);
+            ctx.font = "bold 30px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineWidth = 4; ctx.strokeText(text, size/2, size/2);
+            ctx.fillStyle = (text === 'C' || text === 'H') ? "#000000" : "#ffffff";
+            if(text === 'C') { ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.strokeText(text, size/2, size/2); }
+            else if (text === 'H') { ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.fillStyle = "#ffffff"; ctx.strokeText(text, size/2, size/2); }
+            ctx.fillText(text, size/2, size/2);
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false })); 
+            sprite.scale.set(0.8, 0.8, 1); sprite.renderOrder = 999; return sprite;
+        }
+
+        function toggleLabels() {
+            if(!ui.toggleLabels) return;
+            const newState = !ui.toggleLabels.innerText.includes("ON");
+            labelSprites.forEach(s => s.visible = newState);
+            mirrorLabelSprites.forEach(s => s.visible = newState); 
+            ui.toggleLabels.innerText = `元素記号の表示: ${newState ? "ON" : "OFF"}`;
+        }
+
+        function updateBondTransform(bond) {
+            const start = atoms[bond.a1].pos; const end = atoms[bond.a2].pos; const dist = start.distanceTo(end);
+            bond.mesh.position.copy(start).lerp(end, 0.5);
+            if (dist > 0.001) bond.mesh.lookAt(end); 
+            bond.mesh.rotateX(Math.PI / 2); bond.mesh.scale.set(1, Math.max(0.01, dist), 1);
+        }
+
+        function createMirrorModel() {
+            if (mirrorGroup) scene.remove(mirrorGroup);
+            mirrorGroup = new THREE.Group();
+            mirrorLabelSprites = [];
+            mirrorChiralHighlights = [];
+            
+            const isLabelVisible = ui.toggleLabels.innerText.includes("ON");
+            const mirrorAtoms = [];
+            
+            const geoSphere = new THREE.SphereGeometry(1, 16, 16);
+            
+            atoms.forEach(atom => {
+                const conf = CPK[atom.elem] || CPK['DEFAULT'];
+                const mesh = new THREE.Mesh(geoSphere, new THREE.MeshPhongMaterial({ color: conf.color, shininess: 60 }));
+                mesh.scale.setScalar(conf.radius);
+                const pos = new THREE.Vector3(-atom.pos.x, atom.pos.y, atom.pos.z);
+                mesh.position.copy(pos);
+                mesh.castShadow = true; mesh.receiveShadow = true;
+                mirrorGroup.add(mesh);
+                mirrorAtoms.push({ pos: pos });
+
+                // 鏡像用のキラルハイライトを追加
+                if (atom.isChiral) {
+                    const hlMesh = new THREE.Mesh(geoSphere, chiralHighlightMat);
+                    hlMesh.scale.setScalar(conf.radius * 1.35);
+                    hlMesh.position.copy(pos);
+                    // 現在のON/OFF状態を引き継ぐ
+                    hlMesh.visible = isChiralVisible;
+                    mirrorGroup.add(hlMesh);
+                    mirrorChiralHighlights.push(hlMesh);
+                }
+
+                const sprite = createLabelSprite(atom.elem);
+                sprite.position.set(0, 0, 0); sprite.visible = isLabelVisible; 
+                mesh.add(sprite); mirrorLabelSprites.push(sprite);
+            });
+
+            bonds.forEach(bond => {
+                const start = mirrorAtoms[bond.a1].pos;
+                const end = mirrorAtoms[bond.a2].pos;
+                const dist = start.distanceTo(end);
+
+                const group = new THREE.Group();
+                const mat = new THREE.MeshPhongMaterial({ color: 0xaaaaaa, shininess: 30 });
+                
+                if (bond.type === 2) {
+                    const geo = new THREE.CylinderGeometry(0.06, 0.06, 1, 8);
+                    const c1 = new THREE.Mesh(geo, mat); const c2 = new THREE.Mesh(geo, mat);
+                    c1.position.set(0.12, 0, 0); c2.position.set(-0.12, 0, 0); group.add(c1); group.add(c2);
+                } else if (bond.type === 3) {
+                    const geo = new THREE.CylinderGeometry(0.04, 0.04, 1, 8);
+                    const c1 = new THREE.Mesh(geo, mat); const c2 = new THREE.Mesh(geo, mat); const c3 = new THREE.Mesh(geo, mat);
+                    c1.position.set(0, 0, 0); c2.position.set(0.15, 0, 0); c3.position.set(-0.15, 0, 0); group.add(c1); group.add(c2); group.add(c3);
+                } else {
+                    group.add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1, 8), mat));
+                }
+
+                group.position.copy(start).lerp(end, 0.5);
+                if (dist > 0.001) group.lookAt(end);
+                group.rotateX(Math.PI / 2);
+                group.scale.set(1, Math.max(0.01, dist), 1);
+                
+                mirrorGroup.add(group);
+            });
+
+            scene.add(mirrorGroup);
+        }
+
+        function updateCameraAspect(isSplit) {
+            if (!cameraMain || !cameraMirror) return;
+            const width = isSplit ? window.innerWidth / 2 : window.innerWidth;
+            
+            cameraMain.aspect = width / window.innerHeight;
+            cameraMain.updateProjectionMatrix();
+            
+            if (isSplit) {
+                cameraMirror.aspect = width / window.innerHeight;
+                cameraMirror.updateProjectionMatrix();
+            }
+        }
+
+        function toggleCompareMode() {
+            if (atoms.length === 0) return;
+            
+            isSplitView = !isSplitView;
+
+            if (isSplitView) {
+                stopAllRotate();
+                ui.allRotateBtn.disabled = true; 
+                
+                createMirrorModel();
+                
+                ui.paneLeft.style.width = '50%';
+                ui.paneRight.style.display = 'block';
+                
+                ui.splitLabels.style.display = 'flex';
+                ui.splitDivider.style.display = 'block';
+                
+                cameraMirror.copy(cameraMain);
+                controlsMirror.target.copy(controlsMain.target);
+                controlsMirror.update();
+                
+                ui.compareBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> 比較モードを終了`;
+                ui.compareBtn.classList.add('active-compare');
+                updateCameraAspect(true);
+            } else {
+                ui.paneLeft.style.width = '100%';
+                ui.paneRight.style.display = 'none';
+                ui.splitLabels.style.display = 'none';
+                ui.splitDivider.style.display = 'none';
+                
+                ui.compareBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg> 鏡像を並べて比較`;
+                ui.compareBtn.classList.remove('active-compare');
+                
+                ui.allRotateBtn.disabled = allRotatableBondsList.length === 0;
+                updateCameraAspect(false);
+            }
+        }
+
+        function getRotatableSubstructure(rootId, startNodeId) {
+            let visited = new Set(); let queue = [startNodeId]; visited.add(startNodeId); let isRing = false;
+            while(queue.length > 0) {
+                const curr = queue.shift();
+                const neighbors = bonds.filter(b => b.a1 === curr || b.a2 === curr).map(b => b.a1 === curr ? b.a2 : b.a1);
+                for (let next of neighbors) {
+                    if ((curr === startNodeId && next === rootId) || (curr === rootId && next === startNodeId)) continue;
+                    if (next === rootId) isRing = true;
+                    if (!visited.has(next) && next !== rootId) { visited.add(next); queue.push(next); }
+                }
+            } return { canRotate: !isRing, substructure: Array.from(visited) };
+        }
+
+        function prepareAllRotatableBonds() {
+            allRotatableBondsList = [];
+            bonds.forEach(bond => {
+                if (bond.type === 1) { 
+                    const res1 = getRotatableSubstructure(bond.a1, bond.a2); const res2 = getRotatableSubstructure(bond.a2, bond.a1);
+                    if (res1.canRotate && res2.canRotate) {
+                        let movingIndices, pivotIdx, axisEndIdx;
+                        if (res1.substructure.length <= res2.substructure.length) {
+                            movingIndices = res1.substructure; pivotIdx = bond.a1; axisEndIdx = bond.a2;
+                        } else { movingIndices = res2.substructure; pivotIdx = bond.a2; axisEndIdx = bond.a1; }
+                        allRotatableBondsList.push({
+                            bond: bond, pivotIdx: pivotIdx, axisEndIdx: axisEndIdx, movingIndices: movingIndices,
+                            speed: (Math.random() * 0.6 + 0.2) * (Math.random() < 0.5 ? 1 : -1) 
+                        });
+                    }
+                }
+            });
+            if (!isSplitView) {
+                ui.allRotateBtn.disabled = allRotatableBondsList.length === 0;
+            }
+        }
+
+        function toggleAllRotate() {
+            isAllRotating = !isAllRotating;
+            ui.allRotateBtn.innerText = isAllRotating ? "全自動回転を停止" : "すべての単結合を自動回転";
+        }
+
+        function stopAllRotate() {
+            isAllRotating = false;
+            if(ui.allRotateBtn) ui.allRotateBtn.innerText = "すべての単結合を自動回転";
+        }
+
+        function resetStructure() {
+            stopAllRotate();
+            atoms.forEach((a, i) => { 
+                a.pos.copy(a.originalPos); 
+                a.mesh.position.copy(a.originalPos); 
+                if(a.isChiral) {
+                    const hlIndex = chiralHighlights.findIndex(hl => hl.uuid === moleculeGroup.children.find(c => c.material === chiralHighlightMat && c.position.distanceTo(a.originalPos) < 0.1)?.uuid);
+                    if (hlIndex !== -1) chiralHighlights[hlIndex].position.copy(a.originalPos);
+                }
+            });
+            bonds.forEach(b => updateBondTransform(b));
+            
+            if (isSplitView) {
+                createMirrorModel();
+            }
+            
+            ui.status.style.display = 'none';
+        }
+
+        function onWindowResize() { 
+            if(!renderer) return;
+            updateCameraAspect(isSplitView);
+            renderer.setSize(window.innerWidth, window.innerHeight); 
+        }
+
+        function animate() {
+            requestAnimationFrame(animate); 
+            
+            if(controlsMain) controlsMain.update();
+            if(isSplitView && controlsMirror) controlsMirror.update();
+            
+            if (isAllRotating && allRotatableBondsList.length > 0 && !isSplitView) {
+                allRotatableBondsList.forEach(rotInfo => {
+                    const p1 = atoms[rotInfo.pivotIdx].pos; const p2 = atoms[rotInfo.axisEndIdx].pos;
+                    const axis = new THREE.Vector3().subVectors(p2, p1);
+                    if (axis.lengthSq() > 0.0001) {
+                        axis.normalize(); const quat = new THREE.Quaternion().setFromAxisAngle(axis, THREE.Math.degToRad(rotInfo.speed));
+                        let hasCollision = false; let tempPositions = [];
+                        rotInfo.movingIndices.forEach(idx => {
+                            const relPos = atoms[idx].pos.clone().sub(p1); relPos.applyQuaternion(quat);
+                            const newPos = relPos.add(p1); tempPositions.push({ idx: idx, pos: newPos });
+                            if (!hasCollision) {
+                                for (let j = 0; j < atoms.length; j++) {
+                                    if (rotInfo.movingIndices.includes(j)) continue; 
+                                    if (initialDistances[idx][j] > 2.0 && newPos.distanceTo(atoms[j].pos) < 1.6) { hasCollision = true; break; }
+                                }
+                            }
+                        });
+                        if (hasCollision) rotInfo.speed *= -1; 
+                        else tempPositions.forEach(tp => { atoms[tp.idx].pos.copy(tp.pos); atoms[tp.idx].mesh.position.copy(tp.pos); });
+                    }
+                });
+                bonds.forEach(b => updateBondTransform(b)); 
+                
+                atoms.forEach(a => {
+                    if (a.isChiral && chiralHighlights.length > 0) {
+                        const targetHl = chiralHighlights.find(hl => hl.position.distanceTo(a.mesh.position) < 1.0);
+                        if(targetHl) targetHl.position.copy(a.pos);
+                    }
+                });
+            }
+            
+            if(renderer && scene && cameraMain) {
+                if (isSplitView && mirrorGroup) {
+                    const width = window.innerWidth;
+                    const height = window.innerHeight;
+
+                    renderer.setScissorTest(true);
+
+                    // --- 左画面（オリジナル） ---
+                    renderer.setViewport(0, 0, width / 2, height);
+                    renderer.setScissor(0, 0, width / 2, height);
+                    moleculeGroup.visible = true;
+                    mirrorGroup.visible = false;
+                    renderer.render(scene, cameraMain);
+
+                    // --- 右画面（鏡像異性体） ---
+                    renderer.setViewport(width / 2, 0, width / 2, height);
+                    renderer.setScissor(width / 2, 0, width / 2, height);
+                    moleculeGroup.visible = false;
+                    mirrorGroup.visible = true;
+                    renderer.render(scene, cameraMirror); 
+
+                    renderer.setScissorTest(false);
+                } else {
+                    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+                    if (moleculeGroup) moleculeGroup.visible = true;
+                    if (mirrorGroup) mirrorGroup.visible = false;
+                    renderer.render(scene, cameraMain);
+                }
+            }
+        }
+    </script>
+</body>
+</html>
