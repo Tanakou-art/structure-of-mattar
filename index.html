@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Molecule Viewer</title>
     <style>
         :root {
@@ -22,6 +22,7 @@
             background-color: var(--bg-color); 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
             color: var(--text-main); 
+            touch-action: none; 
         }
         
         #container { 
@@ -33,7 +34,6 @@
             z-index: 1; 
         }
 
-        /* 3D操作を受け取る透明なレイヤー */
         #interaction-layer {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             z-index: 5; pointer-events: none; display: flex;
@@ -145,7 +145,6 @@
         .text-btn:hover:not(:disabled) { background: #f9fafb; border-color: #d1d5db; }
         .text-btn:disabled { background: #f3f4f6; color: #9ca3af; cursor: not-allowed; border-color: #e5e7eb; }
         
-        /* 不斉炭素ボタン用のハイライトスタイル */
         .chiral-btn-active { background: #fffbeb; color: #d97706; border-color: #fde68a; }
         .chiral-btn-active:hover:not(:disabled) { background: #fef3c7; border-color: #fcd34d; }
 
@@ -164,7 +163,6 @@
         #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 16px 24px; background: rgba(17, 24, 39, 0.8); backdrop-filter: blur(4px); color: white; border-radius: 8px; font-size: 1rem; font-weight: 500; z-index: 2000; display: none; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
         #compound-description { font-size: 0.85rem; line-height: 1.5; color: #4b5563; margin-bottom: 12px; display: none; }
 
-        /* 画面分割時のUI要素 */
         #split-divider {
             position: absolute; top: 0; left: 50%; width: 2px; height: 100vh;
             background: rgba(156, 163, 175, 0.5); transform: translateX(-50%);
@@ -180,6 +178,10 @@
             background: rgba(255, 255, 255, 0.9); padding: 8px 24px; border-radius: 24px;
             font-weight: 700; color: #1f2937; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
             border: 1px solid rgba(255,255,255,0.8); backdrop-filter: blur(4px); letter-spacing: 1px;
+        }
+        
+        @media (max-width: 600px) {
+            #ui-container { width: calc(100vw - 40px); }
         }
     </style>
     
@@ -237,7 +239,7 @@
         <div id="compound-description"></div>
         <div id="data-badge" class="badge" style="display: none;"></div>
 
-        <div id="structure-img-container" class="structure-img-container" title="ドラッグして移動">
+        <div id="structure-img-container" class="structure-img-container" title="ドラッグで移動、ピンチで拡大縮小">
             <div class="zoom-controls">
                 <button id="zoom-in-btn" title="拡大">+</button><button id="zoom-out-btn" title="縮小">−</button><button id="zoom-reset-btn" title="リセット">↺</button>
             </div>
@@ -254,7 +256,7 @@
             <button id="all-rotate-btn" class="text-btn" disabled>すべての単結合を自動回転</button>
             <button id="reset-btn" class="text-btn">初期位置に戻す</button>
             
-            <button id="compare-btn" class="text-btn compare-btn" title="画面を分割してオリジナルと鏡像を並べます">
+            <button id="compare-btn" class="text-btn compare-btn" title="不斉炭素の判定中..." disabled>
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="3" x2="12" y2="21"></line></svg>
                 鏡像を並べて比較
             </button>
@@ -264,6 +266,14 @@
     <div id="container"></div>
 
     <script>
+        const materialCache = {};
+        function getAtomMaterial(colorHex) {
+            if (!materialCache[colorHex]) {
+                materialCache[colorHex] = new THREE.MeshPhongMaterial({ color: colorHex, shininess: 60 });
+            }
+            return materialCache[colorHex];
+        }
+
         const CPK = {
             'C': { color: 0x444444, radius: 0.45 }, 'H': { color: 0xFFFFFF, radius: 0.25 },
             'O': { color: 0xFF0D0D, radius: 0.45 }, 'N': { color: 0x2250FD, radius: 0.45 },
@@ -274,12 +284,14 @@
         };
 
         const chiralHighlightMat = new THREE.MeshPhongMaterial({ 
-            color: 0xf59e0b,
-            transparent: true, 
-            opacity: 0.5,
-            shininess: 100,
-            depthWrite: false
+            color: 0xf59e0b, transparent: true, opacity: 0.5, shininess: 100, depthWrite: false
         });
+
+        const sharedBondMat = new THREE.MeshPhongMaterial({ color: 0xaaaaaa, shininess: 30 });
+        const sharedCylGeo1 = new THREE.CylinderGeometry(0.1, 0.1, 1, 8);
+        const sharedCylGeo2 = new THREE.CylinderGeometry(0.06, 0.06, 1, 8);
+        const sharedCylGeo3 = new THREE.CylinderGeometry(0.04, 0.04, 1, 8);
+        const sharedSphereGeo = new THREE.SphereGeometry(1, 16, 16);
 
         let scene, renderer;
         let cameraMain, cameraMirror;
@@ -293,11 +305,13 @@
         let currentZoom = 1.0; let defaultZoom = 1.0; let posX = 0; let posY = 0; let isDragging = false;
         let startX = 0; let startY = 0; let statusTimeout;
 
+        let initialPinchDistance = null;
+        let initialZoomAtPinch = 1.0;
+
         let isSplitView = false;
         let mirrorGroup = null;
         let mirrorLabelSprites = [];
 
-        // キラル中心用変数
         let isChiralVisible = false;
         let chiralHighlights = [];
         let mirrorChiralHighlights = [];
@@ -339,12 +353,62 @@
             ui.zoomOutBtn.addEventListener('click', () => { currentZoom = Math.max(0.2, currentZoom - 0.2); updateTransform(); });
             ui.zoomResetBtn.addEventListener('click', () => { currentZoom = defaultZoom; posX = 0; posY = 0; updateTransform(); });
 
-            const onPointerDown = (e) => { isDragging = true; const clientX = e.clientX !== undefined ? e.clientX : e.touches[0].clientX; const clientY = e.clientY !== undefined ? e.clientY : e.touches[0].clientY; startX = clientX - posX; startY = clientY - posY; ui.imgEl.style.transition = 'none'; ui.imgContainer.style.cursor = 'grabbing'; };
-            const onPointerMove = (e) => { if (!isDragging) return; e.preventDefault(); const clientX = e.clientX !== undefined ? e.clientX : e.touches[0].clientX; const clientY = e.clientY !== undefined ? e.clientY : e.touches[0].clientY; posX = clientX - startX; posY = clientY - startY; applyTransform(); };
-            const onPointerUp = () => { isDragging = false; ui.imgEl.style.transition = 'transform 0.2s ease-out'; ui.imgContainer.style.cursor = 'grab'; };
+            const onPointerDown = (e) => { 
+                if (e.touches && e.touches.length === 2) {
+                    isDragging = false;
+                    initialPinchDistance = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    initialZoomAtPinch = currentZoom;
+                    return;
+                }
+                
+                isDragging = true; 
+                const clientX = e.clientX !== undefined ? e.clientX : e.touches[0].clientX; 
+                const clientY = e.clientY !== undefined ? e.clientY : e.touches[0].clientY; 
+                startX = clientX - posX; startY = clientY - posY; 
+                ui.imgEl.style.transition = 'none'; ui.imgContainer.style.cursor = 'grabbing'; 
+            };
+            
+            const onPointerMove = (e) => { 
+                if (e.touches && e.touches.length === 2 && initialPinchDistance) {
+                    e.preventDefault(); 
+                    const currentDistance = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    const scale = currentDistance / initialPinchDistance;
+                    currentZoom = Math.max(0.2, Math.min(initialZoomAtPinch * scale, 5.0)); 
+                    applyTransform();
+                    return;
+                }
 
-            ui.imgContainer.addEventListener('mousedown', onPointerDown); ui.imgContainer.addEventListener('mousemove', onPointerMove); ui.imgContainer.addEventListener('mouseup', onPointerUp); ui.imgContainer.addEventListener('mouseleave', onPointerUp);
-            ui.imgContainer.addEventListener('touchstart', onPointerDown, { passive: false }); ui.imgContainer.addEventListener('touchmove', onPointerMove, { passive: false }); ui.imgContainer.addEventListener('touchend', onPointerUp); ui.imgContainer.addEventListener('touchcancel', onPointerUp);
+                if (!isDragging) return; 
+                e.preventDefault(); 
+                const clientX = e.clientX !== undefined ? e.clientX : e.touches[0].clientX; 
+                const clientY = e.clientY !== undefined ? e.clientY : e.touches[0].clientY; 
+                posX = clientX - startX; posY = clientY - startY; 
+                applyTransform(); 
+            };
+            
+            const onPointerUp = (e) => { 
+                if (e && e.touches && e.touches.length < 2) {
+                    initialPinchDistance = null;
+                }
+                isDragging = false; 
+                ui.imgEl.style.transition = 'transform 0.2s ease-out'; 
+                ui.imgContainer.style.cursor = 'grab'; 
+            };
+
+            ui.imgContainer.addEventListener('mousedown', onPointerDown); 
+            ui.imgContainer.addEventListener('mousemove', onPointerMove); 
+            ui.imgContainer.addEventListener('mouseup', onPointerUp); 
+            ui.imgContainer.addEventListener('mouseleave', onPointerUp);
+            ui.imgContainer.addEventListener('touchstart', onPointerDown, { passive: false }); 
+            ui.imgContainer.addEventListener('touchmove', onPointerMove, { passive: false }); 
+            ui.imgContainer.addEventListener('touchend', onPointerUp); 
+            ui.imgContainer.addEventListener('touchcancel', onPointerUp);
 
             ui.imgEl.onerror = function() { if (this.src !== this.dataset.fallbackSrc && this.dataset.fallbackSrc) { this.src = this.dataset.fallbackSrc; } else { ui.imgContainer.style.display = 'none'; } };
             ui.imgEl.onload = function() { defaultZoom = this.src === this.dataset.cactusSrc ? 1.35 : 1.0; currentZoom = defaultZoom; posX = 0; posY = 0; updateTransform(); };
@@ -366,7 +430,9 @@
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = false; 
+
             container.appendChild(renderer.domElement);
 
             controlsMain = new THREE.OrbitControls(cameraMain, ui.paneLeft);
@@ -375,9 +441,14 @@
             controlsMirror = new THREE.OrbitControls(cameraMirror, ui.paneRight);
             controlsMirror.enableDamping = true; controlsMirror.dampingFactor = 0.05;
 
-            const ambient = new THREE.AmbientLight(0xffffff, 0.7); scene.add(ambient);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            dirLight.position.set(10, 20, 15); dirLight.castShadow = true; scene.add(dirLight);
+            const ambient = new THREE.AmbientLight(0xffffff, 0.85); scene.add(ambient);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            dirLight.position.set(10, 20, 15); 
+            scene.add(dirLight);
+
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+            backLight.position.set(-10, -10, -15);
+            scene.add(backLight);
 
             moleculeGroup = new THREE.Group(); scene.add(moleculeGroup);
 
@@ -434,7 +505,12 @@
             ui.nameDisplay.innerText = rawName; ui.favoriteToggleBtn.style.display = 'none';
             ui.descriptionArea.style.display = 'none'; ui.imgContainer.style.display = 'none';
             ui.badge.className = "badge"; ui.badge.innerText = "通信中..."; ui.badge.style.display = 'inline-block';
+            
+            // 検索開始時に各種ボタンを一旦無効化
             ui.controlsArea.style.display = 'none';
+            ui.compareBtn.disabled = true;
+            ui.toggleChiralBtn.disabled = true;
+            ui.toggleChiralBtn.innerText = "不斉炭素: 判定中...";
             
             clearMolecule();
 
@@ -447,30 +523,59 @@
 
                 updateLoadingState("データベースに接続中...");
                 const cidUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(info.searchName)}/cids/JSON`;
-                const cidRes = await fetch(cidUrl); if (!cidRes.ok) throw new Error("化合物が見つかりませんでした。");
-                const cid = (await cidRes.json()).IdentifierList.CID[0];
+                let cid = null;
+                try {
+                    const cidRes = await fetch(cidUrl); 
+                    if (cidRes.ok) {
+                        cid = (await cidRes.json()).IdentifierList.CID[0];
+                    }
+                } catch(e) { console.warn("CID fetch failed"); }
 
-                const cactusUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(info.searchName)}/image?width=500&height=500`;
-                const pubchemUrl = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/PNG?record_type=2d&image_size=large`;
-                ui.imgEl.dataset.cactusSrc = cactusUrl; ui.imgEl.dataset.fallbackSrc = pubchemUrl;
-                ui.imgEl.src = cactusUrl; ui.imgContainer.style.display = 'flex'; 
+                const cactusImgUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(info.searchName)}/image?width=500&height=500`;
+                ui.imgEl.dataset.cactusSrc = cactusImgUrl;
+                if (cid) {
+                    ui.imgEl.dataset.fallbackSrc = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/PNG?record_type=2d&image_size=large`;
+                }
+                ui.imgEl.src = cactusImgUrl; ui.imgContainer.style.display = 'flex'; 
 
-                updateLoadingState("3Dデータをダウンロード中...");
-                const sdfRes = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF?record_type=3d`);
+                updateLoadingState("高精度3Dデータを取得中...");
+                let sdfText = null;
 
-                if (sdfRes.ok) {
+                try {
+                    const cactusSdfUrl = `https://cactus.nci.nih.gov/chemical/structure/${encodeURIComponent(info.searchName)}/file?format=sdf&get3d=true`;
+                    const cactusRes = await fetch(cactusSdfUrl);
+                    if (cactusRes.ok) {
+                        const text = await cactusRes.text();
+                        if (text && (text.includes("V2000") || text.includes("V3000"))) {
+                            sdfText = text;
+                        }
+                    }
+                } catch(e) { console.warn("Cactus 3D failed, fallback to PubChem"); }
+
+                if (!sdfText && cid) {
+                    const sdfRes = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF?record_type=3d`);
+                    if (sdfRes.ok) sdfText = await sdfRes.text();
+                }
+
+                if (sdfText) {
                     updateLoadingState("3Dモデルを構築中...");
-                    const chiralCount = parseSDF(await sdfRes.text());
+                    const chiralCount = parseSDF(sdfText);
                     
-                    // 初期状態はOFFにするUI処理
+                    // キラル中心の有無によってボタンの有効・無効を切り替え
                     if (chiralCount > 0) {
                         ui.toggleChiralBtn.disabled = false;
                         ui.toggleChiralBtn.innerText = `不斉炭素をマーク: OFF (${chiralCount}箇所)`;
                         ui.toggleChiralBtn.classList.remove('chiral-btn-active');
+                        
+                        ui.compareBtn.disabled = false;
+                        ui.compareBtn.title = "画面を分割してオリジナルと鏡像を並べます";
                     } else {
                         ui.toggleChiralBtn.disabled = true;
                         ui.toggleChiralBtn.innerText = `不斉炭素: なし`;
                         ui.toggleChiralBtn.classList.remove('chiral-btn-active');
+                        
+                        ui.compareBtn.disabled = true;
+                        ui.compareBtn.title = "不斉炭素がないため鏡像異性体は存在しません";
                     }
 
                     adjustCamera();
@@ -481,8 +586,8 @@
                     displayStatusMessage("この化合物には立体(3D)データがありません。", "warning");
                 }
             } catch (e) {
-                console.error(e); ui.badge.className = "badge"; ui.badge.innerText = "エラー";
-                displayStatusMessage(e.message || "通信エラーが発生しました。", "error");
+                console.error(e); ui.badge.className = "badge"; ui.badge.innerText = "見つかりません";
+                displayStatusMessage("化合物の情報が見つかりませんでした。別の名前でお試しください。", "error");
             } finally { ui.loading.style.display = 'none'; }
         }
 
@@ -519,18 +624,11 @@
         function clearMolecule() {
             for (let i = moleculeGroup.children.length - 1; i >= 0; i--) {
                 const obj = moleculeGroup.children[i];
-                if (obj.children) obj.children.forEach(child => {
-                    if (child.geometry) child.geometry.dispose();
-                    if (child.material) Array.isArray(child.material) ? child.material.forEach(m => m.dispose()) : child.material.dispose();
-                });
-                if (obj.geometry) obj.geometry.dispose();
-                if (obj.material) Array.isArray(obj.material) ? obj.material.forEach(m => m.dispose()) : obj.material.dispose();
                 moleculeGroup.remove(obj);
             }
             atoms = []; bonds = []; labelSprites = []; initialDistances = [];
             chiralHighlights = []; mirrorChiralHighlights = []; 
             
-            // 状態のリセット
             isChiralVisible = false; 
             ui.toggleChiralBtn.classList.remove('chiral-btn-active');
             
@@ -538,12 +636,6 @@
             
             isSplitView = false;
             if (mirrorGroup) {
-                mirrorGroup.children.forEach(child => {
-                    child.traverse(node => {
-                        if (node.isMesh && node.geometry) node.geometry.dispose();
-                        if (node.isMesh && node.material) node.material.dispose();
-                    });
-                });
                 scene.remove(mirrorGroup);
                 mirrorGroup = null;
             }
@@ -619,10 +711,7 @@
                 }
             }
             
-            // 3Dモデル構築前に不斉炭素を判定
             const chiralCount = findChiralCenters().length;
-            
-            // 初期状態はOFFにする
             isChiralVisible = false;
             
             build3DModel(); 
@@ -631,9 +720,6 @@
             return chiralCount;
         }
 
-        // ==========================================
-        // キラル中心（不斉炭素）の判定と表示
-        // ==========================================
         function findChiralCenters() {
             let chiralAtoms = [];
             atoms.forEach((atom, index) => {
@@ -642,18 +728,13 @@
                 let neighbors = bonds.filter(b => b.a1 === index || b.a2 === index)
                                      .map(b => ({ idx: b.a1 === index ? b.a2 : b.a1, type: b.type }));
                                      
-                // 二重結合・三重結合がある場合は不斉炭素にならない
                 if (neighbors.some(n => n.type > 1)) return;
-                
-                // 結合数が3か4のみ対象（暗黙の水素を許容）
                 if (neighbors.length < 3 || neighbors.length > 4) return;
                 
-                // 置換基の構造を木構造の文字列として取得して比較
                 let sigs = neighbors.map(n => getSubtreeSignature(index, n.idx));
-                if (neighbors.length === 3) sigs.push("H"); // 結合が3つの場合は残り1つをHとみなす
+                if (neighbors.length === 3) sigs.push("H");
                 
                 let uniqueSigs = new Set(sigs);
-                // 4つの置換基すべてが異なる構造ならキラル中心
                 if (uniqueSigs.size === 4) {
                     atom.isChiral = true;
                     chiralAtoms.push(index);
@@ -663,51 +744,39 @@
         }
 
         function getSubtreeSignature(centerIdx, startIdx, maxDepth = 8) {
-            let visited = new Set();
-            visited.add(centerIdx);
+            let visited = new Set(); visited.add(centerIdx);
             
             function traverse(currentIdx, parentIdx, depth) {
                 if (depth > maxDepth) return "MAX";
                 if (visited.has(currentIdx)) return "R"; 
                 
                 visited.add(currentIdx);
-                
                 let elem = atoms[currentIdx].elem;
                 let neighbors = bonds.filter(b => b.a1 === currentIdx || b.a2 === currentIdx)
                                      .map(b => ({ idx: b.a1 === currentIdx ? b.a2 : b.a1, type: b.type }))
                                      .filter(n => n.idx !== parentIdx && n.idx !== centerIdx);
                                      
-                if (neighbors.length === 0) {
-                    visited.delete(currentIdx);
-                    return elem;
-                }
+                if (neighbors.length === 0) { visited.delete(currentIdx); return elem; }
                 
                 let childSigs = neighbors.map(n => `${n.type}` + traverse(n.idx, currentIdx, depth + 1));
                 childSigs.sort(); 
-                
                 visited.delete(currentIdx); 
                 return elem + "[" + childSigs.join("") + "]";
             }
-            
             return traverse(startIdx, centerIdx, 1);
         }
 
         function toggleChiralMarks() {
             isChiralVisible = !isChiralVisible;
-            
             chiralHighlights.forEach(m => m.visible = isChiralVisible);
             mirrorChiralHighlights.forEach(m => m.visible = isChiralVisible);
             
             const count = chiralHighlights.length;
             ui.toggleChiralBtn.innerText = `不斉炭素をマーク: ${isChiralVisible ? "ON" : "OFF"} (${count}箇所)`;
             
-            if (isChiralVisible) {
-                ui.toggleChiralBtn.classList.add('chiral-btn-active');
-            } else {
-                ui.toggleChiralBtn.classList.remove('chiral-btn-active');
-            }
+            if (isChiralVisible) ui.toggleChiralBtn.classList.add('chiral-btn-active');
+            else ui.toggleChiralBtn.classList.remove('chiral-btn-active');
         }
-        // ==========================================
 
         function calcInitialDistances() {
             initialDistances = new Array(atoms.length).fill(0).map(() => new Array(atoms.length).fill(0));
@@ -720,20 +789,17 @@
         }
 
         function build3DModel() {
-            const geoSphere = new THREE.SphereGeometry(1, 16, 16);
             atoms.forEach(atom => {
                 const conf = CPK[atom.elem] || CPK['DEFAULT'];
-                const mesh = new THREE.Mesh(geoSphere, new THREE.MeshPhongMaterial({ color: conf.color, shininess: 60 }));
+                const mat = getAtomMaterial(conf.color);
+                const mesh = new THREE.Mesh(sharedSphereGeo, mat);
                 mesh.scale.setScalar(conf.radius); mesh.position.copy(atom.pos);
-                mesh.castShadow = true; mesh.receiveShadow = true;
                 moleculeGroup.add(mesh); atom.mesh = mesh;
 
-                // キラル中心のハイライト球（半透明）
                 if (atom.isChiral) {
-                    const hlMesh = new THREE.Mesh(geoSphere, chiralHighlightMat);
+                    const hlMesh = new THREE.Mesh(sharedSphereGeo, chiralHighlightMat);
                     hlMesh.scale.setScalar(conf.radius * 1.35); 
                     hlMesh.position.copy(atom.pos);
-                    // 初期表示フラグに従って可視性を設定
                     hlMesh.visible = isChiralVisible;
                     moleculeGroup.add(hlMesh);
                     chiralHighlights.push(hlMesh);
@@ -745,17 +811,20 @@
             });
 
             bonds.forEach(bond => {
-                const group = new THREE.Group(); const mat = new THREE.MeshPhongMaterial({ color: 0xaaaaaa, shininess: 30 });
+                const group = new THREE.Group(); 
                 if (bond.type === 2) {
-                    const geo = new THREE.CylinderGeometry(0.06, 0.06, 1, 8);
-                    const c1 = new THREE.Mesh(geo, mat); const c2 = new THREE.Mesh(geo, mat);
-                    c1.position.set(0.12, 0, 0); c2.position.set(-0.12, 0, 0); group.add(c1); group.add(c2);
+                    const c1 = new THREE.Mesh(sharedCylGeo2, sharedBondMat); 
+                    const c2 = new THREE.Mesh(sharedCylGeo2, sharedBondMat);
+                    c1.position.set(0.12, 0, 0); c2.position.set(-0.12, 0, 0); 
+                    group.add(c1); group.add(c2);
                 } else if (bond.type === 3) {
-                    const geo = new THREE.CylinderGeometry(0.04, 0.04, 1, 8);
-                    const c1 = new THREE.Mesh(geo, mat); const c2 = new THREE.Mesh(geo, mat); const c3 = new THREE.Mesh(geo, mat);
-                    c1.position.set(0, 0, 0); c2.position.set(0.15, 0, 0); c3.position.set(-0.15, 0, 0); group.add(c1); group.add(c2); group.add(c3);
+                    const c1 = new THREE.Mesh(sharedCylGeo3, sharedBondMat); 
+                    const c2 = new THREE.Mesh(sharedCylGeo3, sharedBondMat); 
+                    const c3 = new THREE.Mesh(sharedCylGeo3, sharedBondMat);
+                    c1.position.set(0, 0, 0); c2.position.set(0.15, 0, 0); c3.position.set(-0.15, 0, 0); 
+                    group.add(c1); group.add(c2); group.add(c3);
                 } else {
-                    group.add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1, 8), mat));
+                    group.add(new THREE.Mesh(sharedCylGeo1, sharedBondMat));
                 }
                 moleculeGroup.add(group); bond.mesh = group; updateBondTransform(bond);
             });
@@ -798,24 +867,20 @@
             const isLabelVisible = ui.toggleLabels.innerText.includes("ON");
             const mirrorAtoms = [];
             
-            const geoSphere = new THREE.SphereGeometry(1, 16, 16);
-            
             atoms.forEach(atom => {
                 const conf = CPK[atom.elem] || CPK['DEFAULT'];
-                const mesh = new THREE.Mesh(geoSphere, new THREE.MeshPhongMaterial({ color: conf.color, shininess: 60 }));
+                const mat = getAtomMaterial(conf.color);
+                const mesh = new THREE.Mesh(sharedSphereGeo, mat);
                 mesh.scale.setScalar(conf.radius);
                 const pos = new THREE.Vector3(-atom.pos.x, atom.pos.y, atom.pos.z);
                 mesh.position.copy(pos);
-                mesh.castShadow = true; mesh.receiveShadow = true;
                 mirrorGroup.add(mesh);
                 mirrorAtoms.push({ pos: pos });
 
-                // 鏡像用のキラルハイライトを追加
                 if (atom.isChiral) {
-                    const hlMesh = new THREE.Mesh(geoSphere, chiralHighlightMat);
+                    const hlMesh = new THREE.Mesh(sharedSphereGeo, chiralHighlightMat);
                     hlMesh.scale.setScalar(conf.radius * 1.35);
                     hlMesh.position.copy(pos);
-                    // 現在のON/OFF状態を引き継ぐ
                     hlMesh.visible = isChiralVisible;
                     mirrorGroup.add(hlMesh);
                     mirrorChiralHighlights.push(hlMesh);
@@ -832,18 +897,19 @@
                 const dist = start.distanceTo(end);
 
                 const group = new THREE.Group();
-                const mat = new THREE.MeshPhongMaterial({ color: 0xaaaaaa, shininess: 30 });
-                
                 if (bond.type === 2) {
-                    const geo = new THREE.CylinderGeometry(0.06, 0.06, 1, 8);
-                    const c1 = new THREE.Mesh(geo, mat); const c2 = new THREE.Mesh(geo, mat);
-                    c1.position.set(0.12, 0, 0); c2.position.set(-0.12, 0, 0); group.add(c1); group.add(c2);
+                    const c1 = new THREE.Mesh(sharedCylGeo2, sharedBondMat); 
+                    const c2 = new THREE.Mesh(sharedCylGeo2, sharedBondMat);
+                    c1.position.set(0.12, 0, 0); c2.position.set(-0.12, 0, 0); 
+                    group.add(c1); group.add(c2);
                 } else if (bond.type === 3) {
-                    const geo = new THREE.CylinderGeometry(0.04, 0.04, 1, 8);
-                    const c1 = new THREE.Mesh(geo, mat); const c2 = new THREE.Mesh(geo, mat); const c3 = new THREE.Mesh(geo, mat);
-                    c1.position.set(0, 0, 0); c2.position.set(0.15, 0, 0); c3.position.set(-0.15, 0, 0); group.add(c1); group.add(c2); group.add(c3);
+                    const c1 = new THREE.Mesh(sharedCylGeo3, sharedBondMat); 
+                    const c2 = new THREE.Mesh(sharedCylGeo3, sharedBondMat); 
+                    const c3 = new THREE.Mesh(sharedCylGeo3, sharedBondMat);
+                    c1.position.set(0, 0, 0); c2.position.set(0.15, 0, 0); c3.position.set(-0.15, 0, 0); 
+                    group.add(c1); group.add(c2); group.add(c3);
                 } else {
-                    group.add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1, 8), mat));
+                    group.add(new THREE.Mesh(sharedCylGeo1, sharedBondMat));
                 }
 
                 group.position.copy(start).lerp(end, 0.5);
@@ -1022,14 +1088,12 @@
 
                     renderer.setScissorTest(true);
 
-                    // --- 左画面（オリジナル） ---
                     renderer.setViewport(0, 0, width / 2, height);
                     renderer.setScissor(0, 0, width / 2, height);
                     moleculeGroup.visible = true;
                     mirrorGroup.visible = false;
                     renderer.render(scene, cameraMain);
 
-                    // --- 右画面（鏡像異性体） ---
                     renderer.setViewport(width / 2, 0, width / 2, height);
                     renderer.setScissor(width / 2, 0, width / 2, height);
                     moleculeGroup.visible = false;
